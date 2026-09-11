@@ -206,3 +206,36 @@ export function getAttendanceSummary() {
 }
 
 export function getAudit() { return { events: auditLog.slice(0, 40), verification: verifyAuditChain(auditLog) }; }
+
+export const checklistTemplates: Record<string, Array<{ id: string; label: string; required: boolean }>> = {
+  NAPDDR: [
+    { id: "NAP-01", label: "Beneficiary register matches observed attendance", required: true },
+    { id: "NAP-02", label: "Counselling and rehabilitation records available", required: true },
+    { id: "NAP-03", label: "Safety, hygiene, and accessibility controls observed", required: true },
+  ],
+  SMILE: [
+    { id: "SMI-01", label: "Skill-training schedule and trainer presence verified", required: true },
+    { id: "SMI-02", label: "Beneficiary consent and grievance register reviewed", required: true },
+    { id: "SMI-03", label: "Outcome documentation sampled", required: false },
+  ],
+  AVYAY: [
+    { id: "AVY-01", label: "Shelter occupancy and basic services verified", required: true },
+    { id: "AVY-02", label: "Medical and care escalation records reviewed", required: true },
+    { id: "AVY-03", label: "Visitor and incident register sampled", required: false },
+  ],
+};
+
+export function getChecklistForInspection(inspectionId: string) {
+  const inspection = inspections.find((item) => item.id === inspectionId);
+  const institute = institutes.find((item) => item.id === inspection?.instituteId);
+  const scheme = institute?.scheme ?? "NAPDDR";
+  return { scheme, items: checklistTemplates[scheme] ?? checklistTemplates.NAPDDR };
+}
+
+export function updateAlertStatus(alertId: string, status: Alert["status"]) {
+  const item = alerts.find((entry) => entry.id === alertId);
+  if (!item) throw new Error("Alert not found");
+  item.status = status;
+  appendAudit(auditLog, { type: `ALERT_${status}`, actor: "demo.department-admin", payload: { alertId, status }, createdAt: new Date().toISOString() });
+  return item;
+}

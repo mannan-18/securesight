@@ -2,12 +2,18 @@ import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import net from "net";
+import multer from "multer";
+import { createHash } from "node:crypto";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
-import { appRouter } from "../routers";
+import { appRouter, actorRole } from "../routers";
 import { createContext } from "./context";
+import { sdk } from "./sdk";
 import { serveStatic, setupVite } from "./vite";
+import { auditLog, evidence, inspections } from "../demoStore";
+import { appendAudit } from "../secureEngine";
+import { LocalDemoEvidenceStorage } from "../providers";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -34,6 +40,40 @@ async function startServer() {
   // Configure body parser with larger size limit for file uploads
   app.use(express.json({ limit: "50mb" }));
   app.use(express.urlencoded({ limit: "50mb", extended: true }));
+  const evidenceUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+    fileFilter: (_req, file, callback) => callback(null, ["image/jpeg", "image/png", "application/pdf"].includes(file.mimetype)),
+  });
+  const demoStorage = new LocalDemoEvidenceStorage();
+  app.post("/api/evidence/upload", evidenceUpload.single("file"), async (req, res) => {
+    try {
+      const user = await sdk.authenticateRequest(req);
+      const role = actorRole(user);
+      if (!["DEPARTMENT_ADMIN", "PMU_INSPECTOR"].includes(role)) return res.status(403).json({ error: "Role not authorized for evidence capture" });
+      const inspectionId = String(req.body.inspectionId ?? "");
+      const inspection = inspections.find((item) => item.id === inspectionId);
+      if (!inspection || !req.file) return res.status(400).json({ error: "inspectionId and supported file are required" });
+      const stored = await demoStorage.put({ filename: req.file.originalname, content: req.file.buffer, mimeType: req.file.mimetype });
+      const item = {
+        id: `EVD-${String(evidence.length + 1).padStart(4, "0")}`,
+        inspectionId,
+        filename: req.file.originalname,
+        mimeType: req.file.mimetype,
+        originalHash: createHash("sha256").update(req.file.buffer).digest("hex"),
+        storageRef: stored.storageKey,
+        capturedAt: new Date().toISOString(),
+        gpsStatus: "LOCATION_UNAVAILABLE",
+        verification: "PENDING" as const,
+      };
+      evidence.unshift(item);
+      inspection.evidenceCount += 1;
+      appendAudit(auditLog, { type: "EVIDENCE_MULTIPART_UPLOADED", actor: user.email ?? user.openId, payload: { evidenceId: item.id, inspectionId, fileSize: stored.size, fileType: item.mimeType }, createdAt: new Date().toISOString() });
+      return res.status(201).json({ evidence: item, metadata: { fileSize: stored.size, createdBy: user.id, storageMode: demoStorage.mode } });
+    } catch (error) {
+      return res.status(401).json({ error: error instanceof Error ? error.message : "Upload unauthorized" });
+    }
+  });
   registerStorageProxy(app);
   registerOAuthRoutes(app);
   // tRPC API

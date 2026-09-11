@@ -4,15 +4,18 @@ import { z } from "zod";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
-import { alerts, assignments, evidence, generateAssignment, getAttendanceSummary, getAudit, getOverview, institutes, inspections, reveal, runRiskAnalysis, seal, startSurpriseInspection, captureGps, submitInspection, verifyEvidenceDemo, seedNewEvidence } from "./demoStore";
+import { alerts, assignments, evidence, generateAssignment, getAttendanceSummary, getAudit, getChecklistForInspection, getOverview, institutes, inspections, reveal, runRiskAnalysis, seal, startSurpriseInspection, captureGps, submitInspection, updateAlertStatus, verifyEvidenceDemo, seedNewEvidence } from "./demoStore";
 import { verifyAuditChain } from "./secureEngine";
 import { MockCCTVProvider, MockVideoConferenceProvider } from "./providers";
 import type { User } from "../drizzle/schema";
 
 export type ActorRole = "DEPARTMENT_ADMIN" | "PMU_INSPECTOR" | "INSTITUTE_ADMIN" | "AUDITOR";
 
-function actorRole(user: User): ActorRole {
-  if (user.role === "admin") return "DEPARTMENT_ADMIN";
+export function actorRole(user: User): ActorRole {
+  if (user.role === "admin" || user.role === "DEPARTMENT_ADMIN") return "DEPARTMENT_ADMIN";
+  if (user.role === "PMU_INSPECTOR") return "PMU_INSPECTOR";
+  if (user.role === "INSTITUTE_ADMIN") return "INSTITUTE_ADMIN";
+  if (user.role === "AUDITOR") return "AUDITOR";
   const email = user.email?.toLowerCase() ?? "";
   if (email.includes("auditor")) return "AUDITOR";
   if (email.includes("institute")) return "INSTITUTE_ADMIN";
@@ -61,6 +64,7 @@ export const appRouter = router({
     assignments: readProcedure.query(() => assignments),
     evidence: readProcedure.query(() => evidence.slice(0, 36)),
     attendance: readProcedure.query(() => getAttendanceSummary()),
+    checklist: readProcedure.input(z.object({ inspectionId: z.string().regex(/^INSP-\d{4,}$/) })).query(({ input }) => getChecklistForInspection(input.inspectionId)),
     audit: verificationProcedure.query(() => getAudit()),
   }),
   workflow: router({
@@ -75,6 +79,8 @@ export const appRouter = router({
     analyzeRisk: verificationProcedure.input(z.object({ inspectionId: z.string().regex(/^INSP-\d{4,}$/) })).mutation(({ input }) => runRiskAnalysis(input.inspectionId)),
     verifyAudit: verificationProcedure.mutation(() => verifyAuditChain(getAudit().events)),
     createVideoSession: fieldProcedure.input(z.object({ participantId: z.string().trim().min(1).max(120) })).mutation(({ input }) => vc.createSession(input)),
+    acknowledgeAlert: departmentProcedure.input(z.object({ alertId: z.string().regex(/^ALT-\d{4,}$/) })).mutation(({ input }) => updateAlertStatus(input.alertId, "ACKNOWLEDGED")),
+    resolveAlert: departmentProcedure.input(z.object({ alertId: z.string().regex(/^ALT-\d{4,}$/) })).mutation(({ input }) => updateAlertStatus(input.alertId, "RESOLVED")),
   }),
   providers: router({
     cctvStatus: readProcedure.input(z.object({ cameraId: z.string().min(1).max(120), streamUrl: z.string().max(500).optional() })).query(({ input }) => cctv.getStatus(input.cameraId, input.streamUrl)),

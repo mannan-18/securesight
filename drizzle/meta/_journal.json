@@ -8,6 +8,13 @@
       "when": 1789145650927,
       "tag": "0000_deep_hitman",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1789152492849,
+      "tag": "0001_romantic_dagger",
+      "breakpoints": true
     }
   ]
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { alerts, assignments, auditLog, evidence, generateAssignment, getAudit, inspections, reveal, seal, startSurpriseInspection, verifyEvidenceDemo } from "./demoStore";
+import { alerts, assignments, auditLog, evidence, generateAssignment, getAudit, getChecklistForInspection, inspections, reveal, seal, startSurpriseInspection, updateAlertStatus, verifyEvidenceDemo } from "./demoStore";
 
 describe("SecureSight demo workflow", () => {
   it("runs server-controlled surprise inspection assignment lifecycle", () => {
@@ -33,5 +33,15 @@ describe("SecureSight demo workflow", () => {
     const assignment = generateAssignment(inspection.id);
     expect(assignments.some((entry) => entry.id === assignment.id && entry.inspectionId === inspection.id)).toBe(true);
     expect(() => generateAssignment(inspection.id)).toThrow();
+  });
+
+  it("returns the institute scheme checklist and records alert triage transitions", () => {
+    const checklist = getChecklistForInspection("INSP-0001");
+    expect(checklist.items.length).toBeGreaterThan(1);
+    expect(checklist.scheme).toBeTruthy();
+    const alert = alerts.find((item) => item.status === "OPEN");
+    if (!alert) throw new Error("Expected open seeded alert");
+    expect(updateAlertStatus(alert.id, "ACKNOWLEDGED").status).toBe("ACKNOWLEDGED");
+    expect(updateAlertStatus(alert.id, "RESOLVED").status).toBe("RESOLVED");
   });
 });
