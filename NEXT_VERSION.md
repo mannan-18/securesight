@@ -21,3 +21,9 @@ Alert acknowledgement and resolution are now server-authorized Department Admin 
 3. Replace local evidence storage with configured S3-compatible presigned uploads and malware scanning.
 4. Upgrade the browser offline queue to an encrypted IndexedDB outbox with service-worker sync.
 5. Add real map tiles/geocoding only after the approved map provider and credentials are configured.
+
+## Phase 2 hardening status
+
+The built-in S3-compatible storage path is now proven with a real presigned upload/download/hash round trip via `scripts/storage-proof.ts`. Multipart evidence uses that storage path and authorized signed downloads. An IndexedDB outbox and service worker shell are now present for offline field work.
+
+The PostgreSQL/PostGIS/Alembic milestone is **not complete** in this WebDev project because the active runtime is MySQL/Drizzle and the managed database currently contains only the auth tables. The exact blocker and proof are recorded in `PHASE2_HARDENING_REPORT.md`; no restart-persistence claim is made for the in-memory domain store.

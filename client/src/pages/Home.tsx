@@ -1,12 +1,13 @@
 import { startLogin } from "@/const";
 import { trpc } from "@/lib/trpc";
+import { enqueueOffline, listOfflineQueue, type OfflineQueueItem } from "@/lib/offlineQueue";
 import { toast } from "sonner";
 import {
   Activity, AlertTriangle, ArrowRight, BadgeCheck, BarChart3, Bell, Camera, Check, ChevronRight,
   ClipboardCheck, FileCheck2, Fingerprint, Gauge, Grid2X2, Landmark, LockKeyhole, MapPin, Menu,
   Radio, RefreshCw, ScanLine, Search, ShieldCheck, Siren, Smartphone, Users, Video, X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 const navGroups = [
   { label: "Overview", items: [{ key: "dashboard", label: "Command centre", icon: Grid2X2 }, { key: "map", label: "Geographic command", icon: MapPin }] },
@@ -68,7 +69,7 @@ export default function Home() {
   const [selectedInspectionId, setSelectedInspectionId] = useState("INSP-0001");
   const [observation, setObservation] = useState("Facility register and beneficiary interaction reviewed.");
   const [checkState, setCheckState] = useState<Record<string, boolean>>({});
-  const [offlineQueue, setOfflineQueue] = useState<Array<{ type: string; createdAt: string }>>(() => { try { return JSON.parse(localStorage.getItem("securesight-offline-queue") ?? "[]"); } catch { return []; } });
+  const [offlineQueue, setOfflineQueue] = useState<OfflineQueueItem[]>([]);
   const { data: user } = trpc.auth.me.useQuery(undefined, { retry: false });
   const overview = trpc.dashboard.overview.useQuery();
   const institutes = trpc.dashboard.institutes.useQuery();
@@ -80,6 +81,7 @@ export default function Home() {
   const audit = trpc.dashboard.audit.useQuery();
   const checklist = trpc.dashboard.checklist.useQuery({ inspectionId: selectedInspectionId });
   const utils = trpc.useUtils();
+  useEffect(() => { void listOfflineQueue().then(setOfflineQueue).catch(() => undefined); }, []);
 
   const refreshAll = () => Promise.all([
     utils.dashboard.overview.invalidate(), utils.dashboard.institutes.invalidate(), utils.dashboard.inspections.invalidate(),
@@ -116,7 +118,7 @@ export default function Home() {
 
   const pageTitle = navGroups.flatMap((group) => group.items).find((item) => item.key === view)?.label ?? "Command centre";
   const isBusy = startInspection.isPending || generateAssignment.isPending || sealAssignment.isPending || revealAssignment.isPending || captureGps.isPending || captureEvidence.isPending || submitInspection.isPending || analyzeRisk.isPending;
-  const queueOfflineAction = (type: string) => { const next = [...offlineQueue, { type, createdAt: new Date().toISOString() }]; setOfflineQueue(next); localStorage.setItem("securesight-offline-queue", JSON.stringify(next)); toast.success("Saved to offline queue"); };
+  const queueOfflineAction = async (type: string) => { const item = await enqueueOffline({ type, createdAt: new Date().toISOString(), payload: { inspectionId: selectedInspectionId, checklist: checkState, observation } }); setOfflineQueue((current) => [...current, item]); toast.success("Saved to IndexedDB offline queue"); };
 
   if (!user) return <div className="grid min-h-screen place-items-center bg-[#081B33] px-5"><div className="w-full max-w-sm rounded-2xl bg-white p-7 shadow-2xl"><div className="flex items-center gap-3"><div className="grid h-10 w-10 place-items-center rounded-lg bg-[#2563EB] text-white"><ShieldCheck className="h-5 w-5" /></div><div><p className="text-sm font-bold tracking-wide text-[#081B33]">SECURESIGHT</p><p className="text-[9px] uppercase tracking-[0.16em] text-slate-500">DoSJE monitoring grid</p></div></div><h1 className="mt-8 text-xl font-bold text-[#081B33]">Sign in to command centre</h1><p className="mt-2 text-sm leading-6 text-slate-500">Authenticated access is required for institutes, inspections, evidence, and audit data.</p><button onClick={() => startLogin()} className="button-press mt-6 flex w-full items-center justify-center gap-2 rounded-lg bg-[#2563EB] px-4 py-3 text-sm font-semibold text-white">Continue to secure login <ArrowRight className="h-4 w-4" /></button><p className="mt-4 text-center text-[10px] leading-4 text-slate-400">Role permissions are enforced by the server, not by this screen.</p></div></div>;
 
