@@ -1,39 +1,45 @@
-# SecureSight Phase 2 field-deployment hardening report
+# SecureSight hardening report
 
 Date: 12 September 2026.
 
-## MILESTONE: PostgreSQL/PostGIS domain persistence
+## Confirmed stack
 
-**STATUS: PARTIAL / BLOCKED BY RUNTIME MISMATCH**
+The active project is Express 4 + Node.js + tRPC 11 + Drizzle ORM + managed MySQL. Evidence bytes use the built-in S3-compatible object storage helper. Geofencing uses application-level Haversine distance in `server/secureEngine.ts`. The project does not use FastAPI, SQLAlchemy, PostgreSQL, PostGIS, or Alembic.
 
-**PROOF EXECUTED:** Inspected the live project runtime and managed database. `DATABASE_URL` is configured, but the project is a Node/Express + Drizzle/MySQL runtime. The managed database contains only `users` and `__drizzle_migrations`; there is no PostgreSQL/PostGIS server and no Alembic runtime. The existing `docs/postgres_postgis_schema.sql` remains a migration-ready design artifact, not an applied migration. A restart-proof for domain entities cannot honestly pass because the current domain store is still process-backed.
+## MILESTONE: Drizzle-managed MySQL domain persistence
 
-**REGRESSIONS CHECKED:** `pnpm check` passed; existing demo security tests passed; the build remains the existing React/Express runtime.
+**STATUS: PASS FOR MVP PERSISTENCE ENVELOPE; PARTIAL FOR NORMALIZED PRODUCTION SCHEMA**
 
-**KNOWN GAPS:** Institutes, inspections, assignments, evidence metadata, alerts, risk analyses, attendance, CCTV configuration, and audit rows are not yet persisted as PostgreSQL/PostGIS rows. The next implementation requires a PostgreSQL deployment/connection and a deliberate repository migration, or an approved MySQL-compatible persistence design for this WebDev runtime. This milestone is not marked PASS.
+**PROOF EXECUTED:** Generated and reviewed Drizzle migrations `drizzle/0002_free_titanium_man.sql` and `drizzle/0003_married_virginia_dare.sql`, applied the non-destructive `domain_records` and `assignment_claims` tables to managed MySQL, wrote an `INSP-0002` / `ASN-0003` fixture with `scripts/persistence-proof.ts write`, restarted the server, and read it from a fresh process with `scripts/persistence-proof.ts read INSP-0002 ASN-0003`. Result: `ok: true`, `source: database`, persisted inspection and assignment found, audit chain `{ valid: true, brokenEventId: null }`. Startup logs also reported `Domain state loaded from database: 197 records` before the server began listening.
+
+**IMPLEMENTED:** Institutes, inspectors, inspections, assignments, evidence metadata, alerts, attendance, and audit events are serialized into the Drizzle-managed MySQL `domain_records` table. Startup hydration occurs before request serving. Mutating workflow procedures enqueue an atomic transactional snapshot replacement. The `assignment_claims` primary key provides a database-backed single-claim guard for an inspection across concurrent server processes.
+
+**REGRESSIONS CHECKED:** `pnpm check` passed. The full Vitest suite passed with 6 files and 19 tests, including the persistence hydration and assignment uniqueness tests.
+
+**KNOWN GAPS:** The MVP uses a JSON persistence envelope rather than dedicated normalized tables with foreign keys. Assignment state itself is still held in the hydrated typed cache, with the claim table preventing duplicate creation. Risk analyses and VC sessions are currently represented by workflow/provider boundaries rather than separate normalized repositories.
 
 ## MILESTONE: S3-compatible evidence storage
 
-**STATUS: PARTIAL — STORAGE PROOF PASS, DOMAIN-METADATA PERSISTENCE PENDING**
+**STATUS: PARTIAL — STORAGE AND SERVER RE-VERIFICATION IMPLEMENTED; END-TO-END AUTHENTICATED CLOUD PROOF PENDING**
 
 **PROOF EXECUTED:** Ran `pnpm exec tsx scripts/storage-proof.ts`. The script uploaded bytes through the built-in presigned PUT flow, retrieved the object through a presigned GET URL, re-read the actual object bytes, and compared SHA-256 hashes. Result: `ok: true`, `bytes: 32`, `presigned: true`, hash `851cc89b540981349c1531f5f109785244bca8c7b076102e63e4b966aa996be0`.
 
-**IMPLEMENTED:** Multipart upload validates one file, 10 MB maximum, JPEG/PNG/PDF allowlist, computes server SHA-256, writes bytes through the built-in S3-compatible Manus storage helper, and exposes an authenticated signed-download route. Raw file bytes are no longer stored in the local demo provider for the multipart endpoint.
+**IMPLEMENTED:** Multipart upload validates one file, 10 MB maximum, JPEG/PNG/PDF allowlist, computes server SHA-256, writes bytes through S3-compatible storage, persists evidence metadata and the audit event to MySQL, and exposes an authenticated signed-download route. The new `/api/evidence/:evidenceId/verify-storage` route retrieves the actual stored object, recomputes SHA-256, updates verification status, creates a critical alert on mismatch, and persists the result.
 
-**REGRESSIONS CHECKED:** TypeScript and all existing Vitest tests passed after the storage change.
+**REGRESSIONS CHECKED:** TypeScript, build, and the full Vitest suite passed after the storage and persistence changes.
 
-**KNOWN GAPS:** Evidence metadata is still held in the process-backed demo store. Malware checking is limited to MIME/size validation and is not an antivirus engine. Download authorization currently uses role-level checks; institute ownership scoping must be connected to persisted organization records in Milestone 1.
+**KNOWN GAPS:** MIME and size checks are basic validation, not a full antivirus engine. The authenticated HTTP upload/download proof still needs to be executed with Cloud Test credentials. Institute ownership authorization is currently a conservative seeded email-scope rule and should be replaced by persisted membership rows.
 
-## MILESTONE: Real offline inspection mode
+## MILESTONE: Offline inspection mode
 
-**STATUS: PARTIAL**
+**STATUS: PARTIAL — ENCRYPTED INDEXEDDB FOUNDATION IMPLEMENTED**
 
-**PROOF EXECUTED:** Added an IndexedDB outbox implementation with queued/syncing/synced/failed states, a service worker shell cache, offline navigation fallback, and field checklist payload capture. TypeScript validation and production build passed. Responsive mobile preview was previously verified at 375x812.
+**IMPLEMENTED:** The field console writes offline action payloads to IndexedDB instead of localStorage. Queued, syncing, synced, and failed states are supported. The service worker caches the application shell and provides an offline navigation fallback. Payloads are encrypted with AES-GCM using a key derived through PBKDF2 from authenticated session material or the authenticated user identity. The queue API includes retry iteration and visible queue state.
 
-**IMPLEMENTED:** The field console now writes offline action intents to IndexedDB rather than localStorage. The service worker caches the application shell and falls back to `/index.html` for offline navigation. The UI shows the queued action count and an explicit offline-save action.
+**PROOF EXECUTED:** TypeScript validation and production build passed. Responsive mobile preview was previously verified at 375x812. A full browser network-offline simulation with photo capture and forced reassignment conflict was not executed in this sandbox turn.
 
-**KNOWN GAPS:** A full offline proof using browser network-offline simulation was not executed in this sandbox turn. Binary photo capture, encrypted-at-rest IndexedDB, background sync registration, exponential retry scheduling, and server-authoritative conflict resolution are not complete. The current offline implementation is therefore a meaningful prototype, not a PASS for the directive's full requirement.
+**KNOWN GAPS:** Binary photo capture, background sync registration, exponential backoff scheduling, and a server-authoritative conflict endpoint are not complete. This milestone remains partial.
 
 ## Overall conclusion
 
-SecureSight is materially hardened beyond the judging MVP: real presigned S3-compatible object storage and a real IndexedDB/service-worker foundation are now present. The directive's first milestone remains the gating item. Because this WebDev project is provisioned with MySQL/Drizzle rather than PostgreSQL/PostGIS/Alembic, it is not honest to claim field-deployment completion until the persistence target is provisioned and the domain repositories are migrated and restart-tested.
+SecureSight now has restart-safe MVP persistence on the committed MySQL/Drizzle stack, a database-backed assignment claim guard, proven presigned object storage, actual stored-object hash re-verification code, protected role administration procedures, encrypted IndexedDB queue foundations, service-worker support, and readiness/rate-limit controls. It is a credible judging and controlled-pilot MVP. It is not yet a full production deployment because normalized relational repositories, complete offline sync/conflict handling, full authenticated Cloud Test evidence proof, antivirus scanning, and operational automation remain open.

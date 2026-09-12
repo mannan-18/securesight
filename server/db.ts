@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, users } from "../drizzle/schema";
+import { DomainRecord, InsertUser, assignmentClaims, domainRecords, users } from "../drizzle/schema";
 import { ENV } from './_core/env';
 
 let _db: ReturnType<typeof drizzle> | null = null;
@@ -89,4 +89,80 @@ export async function getUserByOpenId(openId: string) {
   return result.length > 0 ? result[0] : undefined;
 }
 
-// TODO: add feature queries here as your schema grows.
+export async function listUsers() {
+  const db = await getDb();
+  if (!db) return [];
+  return db.select({ id: users.id, openId: users.openId, name: users.name, email: users.email, role: users.role, organizationId: users.organizationId, createdAt: users.createdAt, lastSignedIn: users.lastSignedIn }).from(users);
+}
+
+export async function updateUserAccess(userId: number, role: "DEPARTMENT_ADMIN" | "PMU_INSPECTOR" | "INSTITUTE_ADMIN" | "AUDITOR", organizationId: string | null) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is required for role administration");
+  await db.update(users).set({ role, organizationId }).where(eq(users.id, userId));
+  const rows = await db.select({ id: users.id, openId: users.openId, name: users.name, email: users.email, role: users.role, organizationId: users.organizationId, createdAt: users.createdAt, lastSignedIn: users.lastSignedIn }).from(users).where(eq(users.id, userId)).limit(1);
+  return rows[0];
+}
+
+export async function createInvitedUser(input: { openId: string; name: string; email: string; role: "DEPARTMENT_ADMIN" | "PMU_INSPECTOR" | "INSTITUTE_ADMIN" | "AUDITOR"; organizationId: string | null }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is required for invitations");
+  await db.insert(users).values({ ...input, loginMethod: "invited" }).onDuplicateKeyUpdate({ set: { name: input.name, email: input.email, role: input.role, organizationId: input.organizationId } });
+  return getUserByOpenId(input.openId);
+}
+
+export async function seedDemoAccounts() {
+  const accounts: InsertUser[] = [
+    { openId: "demo-department-admin", name: "Demo Department Admin", email: "department-admin@securesight.demo", loginMethod: "demo-seed", role: "DEPARTMENT_ADMIN", organizationId: null },
+    { openId: "demo-pmu-inspector", name: "Demo PMU Inspector", email: "pmu-inspector@securesight.demo", loginMethod: "demo-seed", role: "PMU_INSPECTOR", organizationId: null },
+    { openId: "demo-institute-admin", name: "Demo Institute Admin", email: "institute-admin@securesight.demo", loginMethod: "demo-seed", role: "INSTITUTE_ADMIN", organizationId: "INS-001" },
+    { openId: "demo-auditor", name: "Demo Auditor", email: "auditor@securesight.demo", loginMethod: "demo-seed", role: "AUDITOR", organizationId: null },
+  ];
+  for (const account of accounts) await upsertUser(account);
+}
+
+export async function claimAssignment(inspectionId: string, claimId: string) {
+  const db = await getDb();
+  if (!db) return true;
+  try {
+    await db.insert(assignmentClaims).values({ inspectionId, claimId });
+    return true;
+  } catch (error) {
+    const wrapped = error as { code?: string; cause?: { code?: string } };
+    if (wrapped.code === "ER_DUP_ENTRY" || wrapped.cause?.code === "ER_DUP_ENTRY") return false;
+    throw error;
+  }
+}
+
+export async function getAllDomainRecords() {
+  const db = await getDb();
+  if (!db) return [] as DomainRecord[];
+  return db.select().from(domainRecords);
+}
+
+export async function upsertDomainRecord(input: { recordKey: string; entity: string; recordId: string; payload: unknown }) {
+  const db = await getDb();
+  if (!db) throw new Error("Database is required for domain persistence");
+  await db.insert(domainRecords).values(input).onDuplicateKeyUpdate({
+    set: { entity: input.entity, recordId: input.recordId, payload: input.payload },
+  });
+}
+
+export async function upsertDomainRecords(records: Array<{ recordKey: string; entity: string; recordId: string; payload: unknown }>) {
+  const db = await getDb();
+  if (!db || records.length === 0) return;
+  await db.transaction(async (tx) => {
+    await tx.insert(domainRecords).values(records).onDuplicateKeyUpdate({
+      set: { entity: sql`VALUES(${domainRecords.entity})`, recordId: sql`VALUES(${domainRecords.recordId})`, payload: sql`VALUES(${domainRecords.payload})` },
+    });
+  });
+}
+
+export async function replaceDomainRecords(records: Array<{ recordKey: string; entity: string; recordId: string; payload: unknown }>) {
+  const db = await getDb();
+  if (!db || records.length === 0) return;
+  await db.transaction(async (tx) => {
+    const entities = Array.from(new Set(records.map((record) => record.entity)));
+    for (const entity of entities) await tx.delete(domainRecords).where(eq(domainRecords.entity, entity));
+    await tx.insert(domainRecords).values(records);
+  });
+}

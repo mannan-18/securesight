@@ -1,4 +1,5 @@
 import { appendAudit, analyzeAttendance, geofenceStatus, scoreRisk, securePick, sealAssignment, sha256, verifyAuditChain, verifyEvidence, revealAssignment } from "./secureEngine";
+import { getAllDomainRecords, replaceDomainRecords, upsertDomainRecords } from "./db";
 
 export type Institute = {
   id: string;
@@ -86,6 +87,44 @@ export const attendance = institutes.flatMap((institute, index) => Array.from({ 
 for (const item of ["SYSTEM_SEEDED", "RISK_ENGINE_READY", "CCTV_HEARTBEAT_SYNC", "ATTENDANCE_INGESTED", "ALERT_CREATED"]) {
   appendAudit(auditLog, { type: item, actor: "system@securesight.demo", payload: { source: "seed", version: "mvp-0.1" }, createdAt: isoHoursAgo(auditLog.length * 2) });
 }
+
+const persistenceEntities = ["institutes", "inspectors", "inspections", "evidence", "alerts", "assignments", "attendance", "auditEvents"] as const;
+let persistenceTail = Promise.resolve();
+
+function snapshotRecords() {
+  return [
+    ...institutes.map((payload) => ({ entity: "institutes", recordId: payload.id, payload })),
+    ...inspectors.map((payload) => ({ entity: "inspectors", recordId: payload.id, payload })),
+    ...inspections.map((payload) => ({ entity: "inspections", recordId: payload.id, payload })),
+    ...evidence.map((payload) => ({ entity: "evidence", recordId: payload.id, payload })),
+    ...alerts.map((payload) => ({ entity: "alerts", recordId: payload.id, payload })),
+    ...assignments.map((payload) => ({ entity: "assignments", recordId: payload.id, payload })),
+    ...attendance.map((payload, index) => ({ entity: "attendance", recordId: `${payload.instituteId}-${index}`, payload })),
+    ...auditLog.map((payload) => ({ entity: "auditEvents", recordId: payload.id, payload })),
+  ].map((record) => ({ ...record, recordKey: `${record.entity}:${record.recordId}` }));
+}
+
+export async function hydrateDemoState() {
+  const stored = await getAllDomainRecords();
+  if (stored.length === 0) {
+    await upsertDomainRecords(snapshotRecords());
+    return { source: "seeded", count: snapshotRecords().length } as const;
+  }
+  const byEntity = new Map<string, unknown[]>(persistenceEntities.map((entity) => [entity, []]));
+  for (const row of stored) byEntity.get(row.entity)?.push(row.payload);
+  const auditRows = byEntity.get("auditEvents") ?? [];
+  auditRows.sort((left, right) => Number(String((left as { id?: string }).id ?? "").replace("AUD-", "")) - Number(String((right as { id?: string }).id ?? "").replace("AUD-", "")));
+  const replace = <T>(target: T[], entity: string) => { const values = byEntity.get(entity) ?? []; if (values.length) { target.splice(0, target.length, ...(values as T[])); } };
+  replace(institutes, "institutes"); replace(inspectors, "inspectors"); replace(inspections, "inspections"); replace(evidence, "evidence"); replace(alerts, "alerts"); replace(assignments, "assignments"); replace(attendance, "attendance"); replace(auditLog, "auditEvents");
+  return { source: "database", count: stored.length } as const;
+}
+
+export function queuePersistence() {
+  persistenceTail = persistenceTail.then(() => replaceDomainRecords(snapshotRecords()));
+  return persistenceTail;
+}
+
+export function flushPersistence() { return persistenceTail; }
 
 export function getOverview() {
   const highRisk = inspections.filter((item) => item.riskLevel === "HIGH" || item.riskLevel === "CRITICAL").length;

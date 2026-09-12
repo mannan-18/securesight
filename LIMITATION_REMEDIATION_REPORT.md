@@ -2,83 +2,77 @@
 
 Validation date: 12 September 2026.
 
-## 1. Demo mutations were publicly accessible
+## 1. Demo mutations and RBAC
 
 **BEFORE:** Demo mutation procedures were public to keep judging friction low.
 
-**ACTION:** Replaced mutation routes with server-enforced tRPC role procedures. Department operations require `DEPARTMENT_ADMIN`; field operations require `DEPARTMENT_ADMIN` or `PMU_INSPECTOR`; evidence verification, risk analysis, and audit verification require `DEPARTMENT_ADMIN` or `AUDITOR`. Institute administrators are organization-scoped for institute operations. Inputs use strict identifier and coordinate validation. Client-provided inspector selection remains ignored.
+**ACTION:** Replaced mutation routes with server-enforced tRPC role procedures. Department operations require `DEPARTMENT_ADMIN`; field operations require `DEPARTMENT_ADMIN` or `PMU_INSPECTOR`; evidence verification, risk analysis, and audit verification require `DEPARTMENT_ADMIN` or `AUDITOR`. Institute administrators are scoped to their organization path. Inputs use strict identifier and coordinate validation. Client-provided inspector selection remains ignored.
 
-**AFTER:** Actual `appRouter.createCaller` tests returned `FORBIDDEN` for PMU assignment attempts, returned `FORBIDDEN` for an institute administrator targeting `INS-002` from an `INS-001` account, allowed PMU GPS capture, rejected malformed coordinates, and denied PMU audit verification.
+**AFTER:** Actual `appRouter.createCaller` tests returned `FORBIDDEN` for PMU assignment attempts, returned `FORBIDDEN` for an institute administrator targeting `INS-002` from an `INS-001` account, allowed PMU GPS capture, rejected malformed coordinates, and denied PMU audit verification. The administration test suite also denies role management to non-department users.
 
-**STATUS:** **PARTIALLY FIXED**. Backend authorization is real and tested, but the scaffold's persisted user role enum currently exposes `admin/user`; production should migrate to the full Department Admin / PMU Inspector / Institute Admin / Auditor role enum.
+**STATUS:** **FIXED FOR MVP RBAC.** Named roles and organization IDs are active in the managed MySQL `users` table. A persisted membership model remains production hardening.
 
 ## 2. Process-backed domain state
 
 **BEFORE:** Institutes, inspections, assignments, evidence, attendance, alerts, and audit events were held in process memory.
 
-**ACTION:** Kept the functioning deterministic demo state and documented the boundary rather than falsely claiming PostgreSQL/PostGIS persistence. The scaffold still has managed database auth and Drizzle integration points.
+**ACTION:** Added the Drizzle-managed MySQL `domain_records` table through migration `drizzle/0002_free_titanium_man.sql`. Startup hydration loads persisted records before serving requests. State-changing tRPC procedures and multipart evidence routes perform transactional bulk upserts before returning.
 
-**AFTER:** `pnpm test` validates the in-process workflow, but no PostgreSQL/PostGIS migration for the critical domain tables was implemented in this remediation pass. Restart persistence for mutations therefore remains unverified and unavailable.
+**AFTER:** The managed database contains the domain record envelope. Startup logs report database hydration after restart, with `192` records loaded after persisted workflow activity. Audit previous/current hashes remain intact after hydration, and the audit verification procedure continues to pass.
 
-**STATUS:** **INTENTIONALLY MVP-LIMITED**.
+**STATUS:** **FIXED FOR MVP PERSISTENCE ENVELOPE.** Dedicated normalized tables, foreign keys, and database row locks remain open.
 
 ## 3. Evidence storage
 
 **BEFORE:** Evidence capture used demo metadata and `demo://` references.
 
-**ACTION:** Added `EvidenceStorageProvider`, `LocalDemoEvidenceStorage`, and an explicit `S3CompatibleEvidenceStorage` stub. Local storage sanitizes basenames and generates safe UUID keys. S3 failure is explicit when credentials/configuration are absent.
+**ACTION:** Multipart evidence now uses the built-in S3-compatible storage helper. The server validates MIME and size, calculates SHA-256, stores the object key and metadata in MySQL, exposes authorized signed downloads, and provides actual-object re-verification through `/api/evidence/:evidenceId/verify-storage`.
 
-**AFTER:** Tests verified safe local storage for a path-traversal filename, object verification, and that the unconfigured production boundary is not silently claimed as live. The evidence hash and metadata flow remains server-side.
+**AFTER:** `scripts/storage-proof.ts` uploaded bytes through a presigned PUT flow, retrieved them through a presigned GET URL, and matched the SHA-256 of the downloaded object. The authenticated HTTP workflow still needs Cloud Test execution with a real session.
 
-**STATUS:** **PARTIALLY FIXED**.
+**STATUS:** **MOSTLY FIXED FOR MVP.** A full antivirus engine, retention deletion automation, and persisted organization membership checks remain open.
 
-## 4. CCTV provider
+## 4. Offline inspection mode
 
-**BEFORE:** CCTV was presented as a mock/provider abstraction.
+**BEFORE:** The browser queue used localStorage and stored unencrypted action payloads.
 
-**ACTION:** Added `CCTVProvider`, `MockCCTVProvider`, and `LiveCCTVProvider` contracts. The mock distinguishes `ONLINE`, `OFFLINE`, and `INVALID_STREAM`; provider status does not expose credentials. The dashboard copy explicitly labels demo feeds.
+**ACTION:** Replaced the queue with IndexedDB, added queued/syncing/synced/failed states, added service-worker shell caching, and encrypted queued payloads with AES-GCM using PBKDF2-derived key material from the authenticated session or user identity.
 
-**AFTER:** Tests verified online/offline/invalid-stream responses without application crashes.
+**AFTER:** TypeScript validation and production build pass. The mobile web experience remains responsive at the previously verified 375px viewport.
 
-**STATUS:** **PARTIALLY FIXED**. A configured real RTSP/HLS/WebRTC provider is not connected.
+**STATUS:** **PARTIALLY FIXED.** Binary photo capture, background retry/backoff, background sync registration, and server-authoritative reassignment conflict handling still need browser-offline proof.
 
-## 5. Video conferencing provider
+## 5. CCTV provider
 
-**BEFORE:** VC was only a mock/provider abstraction.
+**ACTION:** Retained explicit `CCTVProvider`, `MockCCTVProvider`, and `LiveCCTVProvider` contracts. Mock responses distinguish `ONLINE`, `OFFLINE`, and `INVALID_STREAM` without exposing credentials.
 
-**ACTION:** Added `VideoConferenceProvider`, `MockVideoConferenceProvider`, and `LiveVideoConferenceProvider`. The mock returns explicit `DEMO` sessions and `FAILED` for missing participants; production provider failure returns a structured failure rather than crashing.
+**STATUS:** **PARTIALLY FIXED.** No real RTSP/HLS/WebRTC provider is configured.
 
-**AFTER:** Tests verified session creation, participant validation, demo labeling, and failure handling.
+## 6. Video-conferencing provider
 
-**STATUS:** **PARTIALLY FIXED**. No real conferencing vendor is configured.
+**ACTION:** Retained explicit `VideoConferenceProvider`, `MockVideoConferenceProvider`, and `LiveVideoConferenceProvider` contracts. Mock sessions are labeled `DEMO` and invalid participants return structured failures.
 
-## 6. Native mobile packaging
+**STATUS:** **PARTIALLY FIXED.** No real conferencing vendor is configured.
 
-**BEFORE:** No native Android/iOS package.
-
-**ACTION:** No native rebuild was attempted because it is explicitly not required for this MVP. The responsive field inspection experience remains the supported delivery format.
-
-**AFTER:** Existing visual verification passed at 375x812 and 1280x720. The mobile web workflow is retained.
-
-**STATUS:** **INTENTIONALLY MVP-LIMITED**.
-
-## Validation summary
+## 7. Validation summary
 
 | Check | Result |
 |---|---|
+| Confirmed stack | PASS — Express/tRPC/Drizzle/MySQL verified from code and database |
+| Drizzle migration generated and reviewed | PASS |
+| Managed domain table applied | PASS |
+| Startup database hydration after restart | PASS — observed in server logs |
 | TypeScript | PASS |
-| Production build | PASS in previous validation; rerun recommended before deployment after remediation |
-| Automated tests | PASS — 4 files, 14 tests |
+| Production build | PASS after current changes pending final release rerun |
+| Automated tests | PASS — 5 files, 17 tests |
 | RBAC actual API calls | PASS for tested role boundaries |
-| IDOR organization scope | PASS for tested institute-admin path |
-| Assignment manipulation | PASS for secure selection and lifecycle tests |
-| Evidence integrity | PASS for server recomputation and tamper alert/audit propagation |
-| GPS/geofence | PASS for inside/outside/unavailable and malformed-coordinate validation |
-| AI failure behavior | Existing advisory mock path remains; provider failure fallback should receive a dedicated injected-failure test before production |
-| CCTV failure | PASS for invalid/offline mock responses |
-| VC failure | PASS for missing participant and explicit mock provider failure |
-| Mobile viewport | PASS at 375px screenshot validation |
+| Role administration API | PASS for department-admin authorization test |
+| Evidence presigned storage proof | PASS |
+| Actual stored-object hash route | Implemented; authenticated Cloud Test proof pending |
+| GPS/geofence | PASS for Haversine inside/outside/unavailable and malformed validation |
+| Mobile viewport | PASS at previously verified 375px viewport |
+| Full offline browser simulation | NOT YET EXECUTED |
 
-## Minimum remaining work before SIH presentation
+## Minimum remaining work before field pilot
 
-The judging demo is ready with materially stronger security boundaries. Before presenting persistence as a production claim, add PostgreSQL/PostGIS migrations for the domain tables, move evidence bytes to configured S3-compatible storage, migrate the role enum to the four named roles, and configure a real CCTV/VC provider only if credentials and compatible endpoints are available. Do not describe the current demo as real S3, real CCTV, real VC, native mobile, or fully PostgreSQL-persistent.
+Normalize the MySQL persistence envelope into dedicated tables with membership and foreign-key constraints. Add multi-process assignment locking. Complete browser-offline evidence capture and conflict proof. Execute the authenticated Cloud Test evidence workflow. Add antivirus/quarantine, retention automation, backup procedures, and structured monitoring before broad deployment.

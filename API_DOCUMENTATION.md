@@ -23,7 +23,7 @@ The typed tRPC contract is exported from `server/routers.ts`.
 | `workflow.analyzeRisk` | Runs advisory MockAIProvider-style risk analysis |
 | `workflow.verifyAudit` | Verifies the current hash chain |
 
-## Next-version routes
+## Extended routes
 
 | Procedure or endpoint | Access | Purpose |
 |---|---|---|
@@ -31,6 +31,12 @@ The typed tRPC contract is exported from `server/routers.ts`.
 | `workflow.acknowledgeAlert` | Department Admin | Moves an open alert to acknowledged and appends an audit event. |
 | `workflow.resolveAlert` | Department Admin | Resolves an alert and appends an audit event. |
 | `POST /api/evidence/upload` | Department Admin / PMU Inspector | Authenticated multipart upload with one JPEG, PNG, or PDF up to 10 MB; server computes SHA-256 and records metadata. |
+| `GET /api/evidence/:evidenceId/download` | Authenticated operational role | Returns a short-lived signed object redirect after role and institute-scope checks. |
+| `POST /api/evidence/:evidenceId/verify-storage` | Department Admin / Auditor | Retrieves the stored object, recomputes SHA-256, and creates a critical alert on mismatch. |
+| `administration.users` | Department Admin | Lists authenticated users and persisted organization scope. |
+| `administration.updateUser` | Department Admin | Updates one user's named role and organization scope. |
+| `administration.inviteUser` | Department Admin | Creates or updates an invited role identity in the managed users table. |
+| `administration.permissionMatrix` | Department Admin | Returns the server-owned role capability matrix. |
 | `providers.cctvStatus` | Authenticated | Returns explicit demo/configured CCTV status including invalid-stream handling. |
 
-The geographic command view is currently driven by seeded coordinate records and labeled as a demo map. The browser field queue is an offline action-intent prototype backed by local storage; it is not yet an encrypted background-sync implementation.
+`GET /api/health/ready` reports managed MySQL and object-storage readiness without exposing secrets. The geographic command view is driven by seeded coordinate records and labeled as a demo map. The browser field queue is an encrypted IndexedDB outbox with a service-worker shell cache; full background sync and conflict resolution remain production work.

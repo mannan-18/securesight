@@ -1,13 +1,15 @@
 import { COOKIE_NAME } from "@shared/const";
+import { randomUUID } from "node:crypto";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
 import { publicProcedure, protectedProcedure, router } from "./_core/trpc";
-import { alerts, assignments, evidence, generateAssignment, getAttendanceSummary, getAudit, getChecklistForInspection, getOverview, institutes, inspections, reveal, runRiskAnalysis, seal, startSurpriseInspection, captureGps, submitInspection, updateAlertStatus, verifyEvidenceDemo, seedNewEvidence } from "./demoStore";
+import { alerts, assignments, evidence, flushPersistence, generateAssignment, getAttendanceSummary, getAudit, getChecklistForInspection, getOverview, institutes, inspections, queuePersistence, reveal, runRiskAnalysis, seal, startSurpriseInspection, captureGps, submitInspection, updateAlertStatus, verifyEvidenceDemo, seedNewEvidence } from "./demoStore";
 import { verifyAuditChain } from "./secureEngine";
 import { MockCCTVProvider, MockVideoConferenceProvider } from "./providers";
 import type { User } from "../drizzle/schema";
+import { claimAssignment, createInvitedUser, listUsers, updateUserAccess } from "./db";
 
 export type ActorRole = "DEPARTMENT_ADMIN" | "PMU_INSPECTOR" | "INSTITUTE_ADMIN" | "AUDITOR";
 
@@ -68,22 +70,33 @@ export const appRouter = router({
     audit: verificationProcedure.query(() => getAudit()),
   }),
   workflow: router({
-    startInspection: departmentProcedure.input(z.object({ instituteId: z.string().regex(/^INS-\d{3}$/) })).mutation(({ ctx, input }) => { assertInstituteScope(ctx.actorRole, ctx.user.email, input.instituteId); return startSurpriseInspection(input.instituteId); }),
-    generateAssignment: departmentProcedure.input(z.object({ inspectionId: z.string().regex(/^INSP-\d{4,}$/), requestedInspectorId: z.string().optional() })).mutation(({ input }) => generateAssignment(input.inspectionId)),
-    sealAssignment: departmentProcedure.input(z.object({ assignmentId: z.string().regex(/^ASN-\d{4,}$/) })).mutation(({ input }) => seal(input.assignmentId)),
-    revealAssignment: departmentProcedure.input(z.object({ assignmentId: z.string().regex(/^ASN-\d{4,}$/) })).mutation(({ input }) => reveal(input.assignmentId)),
-    captureGps: fieldProcedure.input(z.object({ inspectionId: z.string().regex(/^INSP-\d{4,}$/), latitude: z.number().min(-90).max(90).nullable(), longitude: z.number().min(-180).max(180).nullable() })).mutation(({ input }) => captureGps(input.inspectionId, input.latitude, input.longitude)),
-    captureEvidence: fieldProcedure.input(z.object({ inspectionId: z.string().regex(/^INSP-\d{4,}$/) })).mutation(({ input }) => seedNewEvidence(input.inspectionId)),
-    submitInspection: fieldProcedure.input(z.object({ inspectionId: z.string().regex(/^INSP-\d{4,}$/), observation: z.string().trim().min(3).max(1000) })).mutation(({ input }) => submitInspection(input.inspectionId, input.observation)),
-    verifyEvidence: verificationProcedure.input(z.object({ evidenceId: z.string().regex(/^EVD-\d{4,}$/), tamper: z.boolean().default(false) })).mutation(({ input }) => verifyEvidenceDemo(input.evidenceId, input.tamper)),
-    analyzeRisk: verificationProcedure.input(z.object({ inspectionId: z.string().regex(/^INSP-\d{4,}$/) })).mutation(({ input }) => runRiskAnalysis(input.inspectionId)),
+    startInspection: departmentProcedure.input(z.object({ instituteId: z.string().regex(/^INS-\d{3}$/) })).mutation(async ({ ctx, input }) => { assertInstituteScope(ctx.actorRole, ctx.user.email, input.instituteId); const result = startSurpriseInspection(input.instituteId); queuePersistence(); await flushPersistence(); return result; }),
+    generateAssignment: departmentProcedure.input(z.object({ inspectionId: z.string().regex(/^INSP-\d{4,}$/), requestedInspectorId: z.string().optional() })).mutation(async ({ input }) => { const claimed = await claimAssignment(input.inspectionId, randomUUID()); if (!claimed) throw new TRPCError({ code: "CONFLICT", message: "This inspection is already being assigned by another operator" }); const result = generateAssignment(input.inspectionId); queuePersistence(); await flushPersistence(); return result; }),
+    sealAssignment: departmentProcedure.input(z.object({ assignmentId: z.string().regex(/^ASN-\d{4,}$/) })).mutation(async ({ input }) => { const result = seal(input.assignmentId); queuePersistence(); await flushPersistence(); return result; }),
+    revealAssignment: departmentProcedure.input(z.object({ assignmentId: z.string().regex(/^ASN-\d{4,}$/) })).mutation(async ({ input }) => { const result = reveal(input.assignmentId); queuePersistence(); await flushPersistence(); return result; }),
+    captureGps: fieldProcedure.input(z.object({ inspectionId: z.string().regex(/^INSP-\d{4,}$/), latitude: z.number().min(-90).max(90).nullable(), longitude: z.number().min(-180).max(180).nullable() })).mutation(async ({ input }) => { const result = captureGps(input.inspectionId, input.latitude, input.longitude); queuePersistence(); await flushPersistence(); return result; }),
+    captureEvidence: fieldProcedure.input(z.object({ inspectionId: z.string().regex(/^INSP-\d{4,}$/) })).mutation(async ({ input }) => { const result = seedNewEvidence(input.inspectionId); queuePersistence(); await flushPersistence(); return result; }),
+    submitInspection: fieldProcedure.input(z.object({ inspectionId: z.string().regex(/^INSP-\d{4,}$/), observation: z.string().trim().min(3).max(1000) })).mutation(async ({ input }) => { const result = submitInspection(input.inspectionId, input.observation); queuePersistence(); await flushPersistence(); return result; }),
+    verifyEvidence: verificationProcedure.input(z.object({ evidenceId: z.string().regex(/^EVD-\d{4,}$/), tamper: z.boolean().default(false) })).mutation(async ({ input }) => { const result = verifyEvidenceDemo(input.evidenceId, input.tamper); queuePersistence(); await flushPersistence(); return result; }),
+    analyzeRisk: verificationProcedure.input(z.object({ inspectionId: z.string().regex(/^INSP-\d{4,}$/) })).mutation(async ({ input }) => { const result = runRiskAnalysis(input.inspectionId); queuePersistence(); await flushPersistence(); return result; }),
     verifyAudit: verificationProcedure.mutation(() => verifyAuditChain(getAudit().events)),
     createVideoSession: fieldProcedure.input(z.object({ participantId: z.string().trim().min(1).max(120) })).mutation(({ input }) => vc.createSession(input)),
-    acknowledgeAlert: departmentProcedure.input(z.object({ alertId: z.string().regex(/^ALT-\d{4,}$/) })).mutation(({ input }) => updateAlertStatus(input.alertId, "ACKNOWLEDGED")),
-    resolveAlert: departmentProcedure.input(z.object({ alertId: z.string().regex(/^ALT-\d{4,}$/) })).mutation(({ input }) => updateAlertStatus(input.alertId, "RESOLVED")),
+    acknowledgeAlert: departmentProcedure.input(z.object({ alertId: z.string().regex(/^ALT-\d{4,}$/) })).mutation(async ({ input }) => { const result = updateAlertStatus(input.alertId, "ACKNOWLEDGED"); queuePersistence(); await flushPersistence(); return result; }),
+    resolveAlert: departmentProcedure.input(z.object({ alertId: z.string().regex(/^ALT-\d{4,}$/) })).mutation(async ({ input }) => { const result = updateAlertStatus(input.alertId, "RESOLVED"); queuePersistence(); await flushPersistence(); return result; }),
   }),
   providers: router({
     cctvStatus: readProcedure.input(z.object({ cameraId: z.string().min(1).max(120), streamUrl: z.string().max(500).optional() })).query(({ input }) => cctv.getStatus(input.cameraId, input.streamUrl)),
+  }),
+  administration: router({
+    users: departmentProcedure.query(() => listUsers()),
+    updateUser: departmentProcedure.input(z.object({ userId: z.number().int().positive(), role: z.enum(["DEPARTMENT_ADMIN", "PMU_INSPECTOR", "INSTITUTE_ADMIN", "AUDITOR"]), organizationId: z.string().regex(/^INS-\d{3}$/).nullable() })).mutation(({ input }) => updateUserAccess(input.userId, input.role, input.organizationId)),
+    inviteUser: departmentProcedure.input(z.object({ openId: z.string().trim().min(3).max(64), name: z.string().trim().min(2).max(120), email: z.string().email(), role: z.enum(["DEPARTMENT_ADMIN", "PMU_INSPECTOR", "INSTITUTE_ADMIN", "AUDITOR"]), organizationId: z.string().regex(/^INS-\d{3}$/).nullable() })).mutation(({ input }) => createInvitedUser(input)),
+    permissionMatrix: departmentProcedure.query(() => ({
+      DEPARTMENT_ADMIN: ["dashboard:read", "inspection:create", "assignment:generate", "assignment:seal", "assignment:reveal", "evidence:verify", "alerts:triage", "users:manage"],
+      PMU_INSPECTOR: ["dashboard:read", "inspection:field-update", "gps:capture", "evidence:capture", "inspection:submit"],
+      INSTITUTE_ADMIN: ["dashboard:read", "institute:own-scope"],
+      AUDITOR: ["dashboard:read", "evidence:verify", "audit:verify", "risk:review"],
+    })),
   }),
   security: router({
     whoAmI: readProcedure.query(({ ctx }) => ({ role: actorRole(ctx.user), serverAuthoritative: true })),
