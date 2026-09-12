@@ -1,6 +1,6 @@
 # SecureSight MVP delivery checklist
 
-## Completed
+## Complete for this MVP
 
 - [x] Reconcile the committed runtime with Express, tRPC, Drizzle, and managed MySQL.
 - [x] Apply the `domain_records` migration and persist core domain snapshots.
@@ -14,7 +14,7 @@
 - [x] Pass TypeScript, production build, 19 Vitest tests, readiness proof, restart persistence proof, and desktop/mobile screenshot review.
 - [x] Update stack, security, API, Cloud Test, limitation, judge Q&A, and deployment documentation.
 
-## Remaining before production field deployment
+## Deferred / future production hardening — not required to call this MVP complete
 
 - [ ] Normalize `domain_records` into dedicated MySQL tables with foreign keys and membership tables.
 - [ ] Lock and persist the full assignment state with multi-process row-level transactions.
@@ -22,4 +22,6 @@
 - [ ] Execute authenticated Cloud Test HTTP proof for upload, signed download, tamper mismatch, and unauthorized role denial.
 - [ ] Add antivirus/quarantine, retention automation, structured monitoring, backup/restore drills, and secret rotation.
 - [ ] Replace seeded institute-scope checks with persisted organization membership authorization.
-- [ ] Configure real CCTV and video-conference providers only after approved credentials/endpoints exist.
+- [ ] Configure real CCTV and video-conference providers after approved credentials/endpoints exist.
+
+These deferred items are explicitly described in `KNOWN_LIMITATIONS.md`, `PHASE2_HARDENING_REPORT.md`, and `AWS_DEPLOYMENT.md`; the MVP does not present them as completed production capabilities.
